@@ -120,6 +120,7 @@ export const templateVariables: Record<NotifyType, Array<{ name: string; label: 
     { name: 'buyer_nick', label: '买家昵称' },
     { name: 'buyer_id', label: '买家 ID' },
     { name: 'message', label: '消息内容' },
+    { name: 'item_title', label: '商品名称' },
     { name: 'item_id', label: '商品 ID' },
     { name: 'chat_id', label: '聊天 ID' },
     { name: 'time', label: '通知时间' },
@@ -173,6 +174,7 @@ export const defaultTemplates: Record<NotifyType, string> = {
 闲鱼账号: {{account}}
 发送者: {{buyer_nick}}
 消息: {{message}}
+商品名称: {{item_title}}
 商品ID: {{item_id}}
 时间: {{time}}`,
   delivery: `🚨 自动发货通知

@@ -50,7 +50,7 @@ const TEMPLATE_FIELDS: { key: keyof NotificationTemplates; label: string; variab
   {
     key: 'chat_template',
     label: '消息通知',
-    variables: ['account', 'account_id', 'account_remark', 'buyer_nick', 'buyer_id', 'message', 'item_id', 'chat_id', 'time'],
+    variables: ['account', 'account_id', 'account_remark', 'buyer_nick', 'buyer_id', 'message', 'item_title', 'item_id', 'chat_id', 'time'],
   },
   {
     key: 'delivery_template',

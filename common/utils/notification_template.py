@@ -24,6 +24,7 @@ TEMPLATE_VARIABLES = {
         "buyer_id",
         "message",
         "item_id",
+        "item_title",
         "chat_id",
         "time",
     },
@@ -72,15 +73,16 @@ TEMPLATE_VARIABLES = {
 }
 
 _PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
-_CHAT_TITLE_MAX_LENGTH = 60
+_CHAT_MESSAGE_PREVIEW_MAX_LENGTH = 60
 
 
-def render_chat_notification_title(message: str) -> str | None:
-    """将买家消息压成单行标题，空白消息沿用渠道标题。"""
-    title = " ".join(message.split())
-    if len(title) > _CHAT_TITLE_MAX_LENGTH:
-        return f"{title[:_CHAT_TITLE_MAX_LENGTH - 1].rstrip()}…"
-    return title or None
+def render_chat_notification_title(account_nick: str, message: str) -> str:
+    """用收消息账号昵称和单行消息预览生成通知标题。"""
+    nickname = " ".join(account_nick.split())
+    preview = " ".join(message.split())
+    if len(preview) > _CHAT_MESSAGE_PREVIEW_MAX_LENGTH:
+        preview = f"{preview[:_CHAT_MESSAGE_PREVIEW_MAX_LENGTH - 1].rstrip()}…"
+    return f"{nickname} 新消息:{preview}"
 
 
 def validate_notification_template(template: Any, template_type: str) -> str | None:

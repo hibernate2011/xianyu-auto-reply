@@ -8,6 +8,7 @@
 
 使用common/utils/notification_utils.py中的通知发送函数
 """
+import asyncio
 import time
 import hashlib
 from decimal import Decimal, InvalidOperation
@@ -20,6 +21,26 @@ from common.utils.notification_dispatch import dispatch_notification
 from common.services.token_api_mode import TOKEN_API_NAMES
 from common.utils.text_utils import safe_str
 from common.utils.notification_template import render_chat_notification_title, render_notification_template
+
+
+def get_chat_notification_details(cookie_id: str, item_id: str | None) -> tuple[str, str, str]:
+    """读取聊天通知使用的账号昵称、备注和本地商品名称。"""
+    account_details = {}
+    try:
+        account_details = db_manager.get_cookie_details(cookie_id) or {}
+    except Exception as e:
+        logger.warning("获取账号详情失败: {}", e)
+
+    remark = account_details.get("remark") or ""
+    account_nick = (account_details.get("display_name") or "").strip() or cookie_id
+    item_title = "未知"
+    if item_id:
+        try:
+            item = db_manager.get_item_info(cookie_id, item_id) or {}
+            item_title = (item.get("item_title") or "").strip() or item_title
+        except Exception as e:
+            logger.warning("获取商品 {} 的名称失败: {}", item_id, e)
+    return account_nick, remark, item_title
 
 
 class NotificationManager:
@@ -84,20 +105,16 @@ class NotificationManager:
                 logger.warning(f"📱 账号 {self.cookie_id} 未配置消息通知，跳过通知发送")
                 return
 
-            # 获取账号备注
-            remark = ""
-            try:
-                account_details = db_manager.get_cookie_details(self.cookie_id)
-                if account_details:
-                    remark = account_details.get("remark") or ""
-            except Exception as e:
-                logger.warning(f"获取账号详情失败: {e}")
+            account_nick, remark, item_title = await asyncio.to_thread(
+                get_chat_notification_details, self.cookie_id, item_id
+            )
 
             # 构建通知内容（与旧框架保持一致）
             account_desc = f"{self.cookie_id}({remark})" if remark else self.cookie_id
             notification_msg = f"🚨 接收消息通知\n\n" \
                              f"闲鱼账号: {account_desc}\n" \
                              f"买家: {send_user_name} (ID: {send_user_id})\n" \
+                             f"商品名称: {item_title}\n" \
                              f"商品ID: {item_id or '未知'}\n" \
                              f"聊天ID: {chat_id or '未知'}\n" \
                              f"消息内容: {send_message}\n" \
@@ -108,7 +125,7 @@ class NotificationManager:
                 notifications,
                 notification_msg,
                 template_type="chat",
-                title=render_chat_notification_title(send_message or ""),
+                title=render_chat_notification_title(account_nick, send_message or ""),
                 template_context={
                     "account": account_desc,
                     "account_id": self.cookie_id,
@@ -117,6 +134,7 @@ class NotificationManager:
                     "buyer_id": send_user_id or "未知",
                     "message": send_message or "",
                     "item_id": item_id or "未知",
+                    "item_title": item_title,
                     "chat_id": chat_id or "未知",
                     "time": time.strftime('%Y-%m-%d %H:%M:%S'),
                 },

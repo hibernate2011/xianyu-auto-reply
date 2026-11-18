@@ -12,6 +12,8 @@ from common.utils.notification_template import render_chat_notification_title, r
 from common.utils.notification_utils import parse_notification_config
 from common.utils.notification_dispatch import dispatch_notification
 
+from .notification_manager import get_chat_notification_details
+
 
 class AutoReplyLogsMixin:
     """封装自动回复logs相关处理。"""
@@ -297,14 +299,9 @@ class AutoReplyLogsMixin:
                 logger.info(f"【{self.cookie_id}】未配置消息通知，跳过通知发送")
                 return
             
-            # 获取账号备注
-            remark = ""
-            try:
-                account_details = db_manager.get_cookie_details(self.cookie_id)
-                if account_details:
-                    remark = account_details.get("remark") or ""
-            except Exception as e:
-                logger.warning(f"获取账号详情失败: {e}")
+            account_nick, remark, item_title = await asyncio.to_thread(
+                get_chat_notification_details, self.cookie_id, item_id
+            )
 
             # 构建通知内容
             account_desc = f"{self.cookie_id}({remark})" if remark else self.cookie_id
@@ -313,6 +310,7 @@ class AutoReplyLogsMixin:
             notification_content += f"发送者: {send_user_name}\n"
             notification_content += f"消息: {send_message}\n"
             if item_id:
+                notification_content += f"商品名称: {item_title}\n"
                 notification_content += f"商品ID: {item_id}\n"
             notification_content += f"时间: {msg_time}"
             template_context = {
@@ -323,10 +321,11 @@ class AutoReplyLogsMixin:
                 "buyer_id": send_user_id or "未知",
                 "message": send_message or "",
                 "item_id": item_id or "未知",
+                "item_title": item_title,
                 "chat_id": chat_id or "未知",
                 "time": msg_time or time.strftime('%Y-%m-%d %H:%M:%S'),
             }
-            title = render_chat_notification_title(send_message or "")
+            title = render_chat_notification_title(account_nick, send_message or "")
             
             # 发送通知到各渠道
             for notification in notifications:

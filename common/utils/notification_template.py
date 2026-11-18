@@ -76,13 +76,13 @@ _PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
 _CHAT_MESSAGE_PREVIEW_MAX_LENGTH = 60
 
 
-def render_chat_notification_title(account_nick: str, message: str) -> str:
-    """用收消息账号昵称和单行消息预览生成通知标题。"""
-    nickname = " ".join(account_nick.split())
+def render_chat_notification_title(account_remark: str, message: str) -> str:
+    """用账号备注和单行消息预览生成通知标题。"""
+    remark = " ".join(account_remark.split())
     preview = " ".join(message.split())
     if len(preview) > _CHAT_MESSAGE_PREVIEW_MAX_LENGTH:
         preview = f"{preview[:_CHAT_MESSAGE_PREVIEW_MAX_LENGTH - 1].rstrip()}…"
-    return f"{nickname} 新消息:{preview}"
+    return f"{remark} 新消息:{preview}"
 
 
 def validate_notification_template(template: Any, template_type: str) -> str | None:

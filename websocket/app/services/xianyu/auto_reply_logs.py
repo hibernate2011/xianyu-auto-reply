@@ -299,7 +299,7 @@ class AutoReplyLogsMixin:
                 logger.info(f"【{self.cookie_id}】未配置消息通知，跳过通知发送")
                 return
             
-            account_nick, remark, item_title = await asyncio.to_thread(
+            remark, item_title = await asyncio.to_thread(
                 get_chat_notification_details, self.cookie_id, item_id
             )
 
@@ -325,7 +325,7 @@ class AutoReplyLogsMixin:
                 "chat_id": chat_id or "未知",
                 "time": msg_time or time.strftime('%Y-%m-%d %H:%M:%S'),
             }
-            title = render_chat_notification_title(account_nick, send_message or "")
+            title = render_chat_notification_title(template_context["account_remark"], send_message or "")
             
             # 发送通知到各渠道
             for notification in notifications:

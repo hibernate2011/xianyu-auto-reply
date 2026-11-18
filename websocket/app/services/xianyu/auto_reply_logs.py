@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from common.db.compat import db_manager
-from common.utils.notification_template import render_notification_template
+from common.utils.notification_template import render_chat_notification_title, render_notification_template
 from common.utils.notification_utils import parse_notification_config
 from common.utils.notification_dispatch import dispatch_notification
 
@@ -326,6 +326,7 @@ class AutoReplyLogsMixin:
                 "chat_id": chat_id or "未知",
                 "time": msg_time or time.strftime('%Y-%m-%d %H:%M:%S'),
             }
+            title = render_chat_notification_title(send_message or "")
             
             # 发送通知到各渠道
             for notification in notifications:
@@ -347,7 +348,7 @@ class AutoReplyLogsMixin:
                         notification_content,
                     )
                     
-                    await dispatch_notification(channel_type, config_data, channel_message)
+                    await dispatch_notification(channel_type, config_data, channel_message, title=title)
 
                 except Exception as e:
                     logger.error(f"【{self.cookie_id}】发送{channel_type}通知失败: {e}")

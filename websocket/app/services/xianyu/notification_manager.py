@@ -19,7 +19,7 @@ from common.utils.notification_utils import parse_notification_config
 from common.utils.notification_dispatch import dispatch_notification
 from common.services.token_api_mode import TOKEN_API_NAMES
 from common.utils.text_utils import safe_str
-from common.utils.notification_template import render_notification_template
+from common.utils.notification_template import render_chat_notification_title, render_notification_template
 
 
 class NotificationManager:
@@ -108,6 +108,7 @@ class NotificationManager:
                 notifications,
                 notification_msg,
                 template_type="chat",
+                title=render_chat_notification_title(send_message or ""),
                 template_context={
                     "account": account_desc,
                     "account_id": self.cookie_id,
@@ -376,13 +377,15 @@ class NotificationManager:
         return False
 
     async def _send_to_channels(self, notifications: list, message: str, attachment_path: str = None,
-                                template_type: str = None, template_context: dict = None) -> bool:
+                                template_type: str = None, template_context: dict = None, *,
+                                title: str | None = None) -> bool:
         """发送通知到各个渠道
         
         Args:
             notifications: 通知配置列表
             message: 通知消息
             attachment_path: 附件路径（可选）
+            title: 通知标题（可选）
             
         Returns:
             是否成功发送
@@ -409,7 +412,7 @@ class NotificationManager:
                 ) if template_type else message
 
                 success = await dispatch_notification(
-                    channel_type, config_data, channel_message, attachment_path
+                    channel_type, config_data, channel_message, attachment_path, title=title
                 )
                 notification_sent = notification_sent or success
 

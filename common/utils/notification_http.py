@@ -37,12 +37,13 @@ async def _response_succeeded(response, channel: str, field: str, expected: obje
     return ok
 
 
-async def send_dingtalk_notification(config_data: Dict[str, Any], message: str) -> bool:
+async def send_dingtalk_notification(config_data: Dict[str, Any], message: str, *, title: str | None = None) -> bool:
     """发送钉钉通知
     
     Args:
         config_data: 配置数据，包含webhook_url和可选的secret
         message: 通知消息
+        title: 通知标题
         
     Returns:
         是否发送成功
@@ -77,7 +78,7 @@ async def send_dingtalk_notification(config_data: Dict[str, Any], message: str) 
         data = {
             "msgtype": "markdown",
             "markdown": {
-                "title": "闲鱼自动回复通知",
+                "title": title or "闲鱼自动回复通知",
                 "text": markdown_message
             }
         }
@@ -140,12 +141,12 @@ async def send_feishu_notification(config_data: Dict[str, Any], message: str) ->
 
 
 
-async def send_bark_notification(config_data: Dict[str, Any], message: str) -> bool:
+async def send_bark_notification(config_data: Dict[str, Any], message: str, *, title: str | None = None) -> bool:
     """发送Bark通知"""
     try:
         server_url = config_data.get('server_url', 'https://api.day.app').rstrip('/')
         device_key = config_data.get('device_key', '')
-        title = config_data.get('title', '闲鱼自动回复通知')
+        title = title or config_data.get('title', '闲鱼自动回复通知')
         sound = config_data.get('sound', 'default')
         icon = config_data.get('icon', '')
         group = config_data.get('group', 'xianyu')
@@ -237,12 +238,13 @@ async def send_wechat_notification(config_data: Dict[str, Any], message: str) ->
         return False
 
 
-async def send_pushplus_notification(config_data: Dict[str, Any], message: str) -> bool:
+async def send_pushplus_notification(config_data: Dict[str, Any], message: str, *, title: str | None = None) -> bool:
     """发送PushPlus通知
 
     Args:
         config_data: 配置数据，包含token，可选topic、template、title
         message: 通知消息
+        title: 通知标题
 
     Returns:
         是否发送成功
@@ -253,7 +255,7 @@ async def send_pushplus_notification(config_data: Dict[str, Any], message: str) 
             logger.warning("📱 PushPlus通知 - token配置为空")
             return False
 
-        title = config_data.get('title') or '闲鱼自动回复通知'
+        title = title or config_data.get('title') or '闲鱼自动回复通知'
         template = config_data.get('template') or 'txt'
         topic = (config_data.get('topic') or '').strip()
         server_url = (config_data.get('server_url') or 'https://www.pushplus.plus').rstrip('/')

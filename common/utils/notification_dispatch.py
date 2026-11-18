@@ -23,6 +23,8 @@ async def dispatch_notification(
     config: dict,
     message: str,
     attachment_path: str | None = None,
+    *,
+    title: str | None = None,
     **email_context,
 ) -> bool:
     """按渠道调用公共发送函数，返回实际结果。
@@ -32,6 +34,7 @@ async def dispatch_notification(
         config: 已解析的渠道配置。
         message: 已渲染的通知内容。
         attachment_path: 邮件附件路径。
+        title: 渠道支持独立标题时使用的标题。
         email_context: 邮件日志所需的用户、操作与客户端IP信息。
     Returns:
         仅第三方发送函数确认成功时返回True；不支持的渠道抛出明确错误。
@@ -50,12 +53,15 @@ async def dispatch_notification(
         "pushplus": send_pushplus_notification,
     }
     if channel_type == "email":
-        success = await send_email_notification(config, message, attachment_path, **email_context)
+        success = await send_email_notification(config, message, attachment_path, title=title, **email_context)
     else:
         sender = senders.get(channel_type)
         if sender is None:
             raise ValueError(f"不支持的通知渠道类型：{channel_type}")
-        success = await sender(config, message)
+        if title is not None and channel_type in {"ding_talk", "dingtalk", "bark", "pushplus"}:
+            success = await sender(config, message, title=title)
+        else:
+            success = await sender(config, message)
     if not success:
         logger.error("通知渠道发送失败：channel_type={}", channel_type)
     return bool(success)

@@ -102,6 +102,8 @@ async def send_email_notification(
     trigger_operation: str | None = None,
     client_ip: Optional[str] = None,
     record_log: bool = True,
+    *,
+    title: str | None = None,
 ) -> bool:
     """发送邮件通知
 
@@ -117,6 +119,7 @@ async def send_email_notification(
         trigger_operation: 触发操作枚举值；未提供时不写入邮件日志
         client_ip: 客户端IP
         record_log: 是否写入邮件发送日志
+        title: 邮件主题
     Returns:
         是否发送成功
     """
@@ -184,7 +187,7 @@ async def send_email_notification(
         msg = MIMEMultipart()
         msg['From'] = email_user
         msg['To'] = recipient_email
-        msg['Subject'] = "闲鱼自动回复通知"
+        msg['Subject'] = title or "闲鱼自动回复通知"
         msg.attach(MIMEText(message, 'plain', 'utf-8'))
 
         if attachment_path and os.path.exists(attachment_path):

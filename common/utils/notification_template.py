@@ -1,4 +1,4 @@
-"""通知正文模板的安全渲染工具。"""
+"""通知正文模板与聊天通知标题的渲染工具。"""
 from __future__ import annotations
 
 import re
@@ -72,6 +72,15 @@ TEMPLATE_VARIABLES = {
 }
 
 _PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
+_CHAT_TITLE_MAX_LENGTH = 60
+
+
+def render_chat_notification_title(message: str) -> str | None:
+    """将买家消息压成单行标题，空白消息沿用渠道标题。"""
+    title = " ".join(message.split())
+    if len(title) > _CHAT_TITLE_MAX_LENGTH:
+        return f"{title[:_CHAT_TITLE_MAX_LENGTH - 1].rstrip()}…"
+    return title or None
 
 
 def validate_notification_template(template: Any, template_type: str) -> str | None:

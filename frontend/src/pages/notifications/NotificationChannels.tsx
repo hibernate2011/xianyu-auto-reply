@@ -10,7 +10,8 @@ import { Pager } from '@/components/common/Pager'
 import { getApiErrorMessage } from '@/utils/request'
 import { useNotificationTypeOptions } from './useNotificationTypeOptions'
 import { NotificationChannelList } from './NotificationChannelList'
-import { channelTypeLabels, channelTypes, defaultTemplates, getChannelConfigHint, getTemplateValidationError, notifyTypeHints, parseNotifyTypes, splitTemplateConfig, templateConfigKeys, templateVariables } from './notificationChannelConfig'
+import { MonitorOpenRouterKeyForm } from './MonitorOpenRouterKeyForm'
+import { channelTypeLabels, channelTypes, defaultMonitorAiThreshold, defaultTemplates, getChannelConfigHint, getTemplateValidationError, monitorAiThresholdKey, notifyTypeHints, parseNotifyTypes, splitTemplateConfig, templateConfigKeys, templateVariables } from './notificationChannelConfig'
 import type { ChannelType } from './notificationChannelConfig'
 import type { NotificationChannel, NotifyType } from '@/types'
 
@@ -33,6 +34,7 @@ export function NotificationChannels() {
   const [formConfig, setFormConfig] = useState('')
   const [formTemplates, setFormTemplates] = useState<Record<NotifyType, string>>({ ...defaultTemplates })
   const [formNotifyTypes, setFormNotifyTypes] = useState<NotifyType[]>([])
+  const [formMonitorAiThreshold, setFormMonitorAiThreshold] = useState(String(defaultMonitorAiThreshold))
   const [formEnabled, setFormEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [operatingChannelId, setOperatingChannelId] = useState<string | null>(null)
@@ -146,7 +148,8 @@ export function NotificationChannels() {
       setFormConfig('')
     }
     setFormTemplates({ ...defaultTemplates })
-    setFormNotifyTypes([...allNotifyTypes])
+    setFormNotifyTypes(parseNotifyTypes(undefined, allNotifyTypes))
+    setFormMonitorAiThreshold(String(defaultMonitorAiThreshold))
     setFormEnabled(true)
     setIsModalOpen(true)
   }
@@ -182,6 +185,11 @@ export function NotificationChannels() {
     }
     setFormTemplates(templates)
     setFormNotifyTypes(parseNotifyTypes(channel.config?.notify_types, allNotifyTypes))
+    const threshold = channel.config?.[monitorAiThresholdKey]
+    setFormMonitorAiThreshold(String(
+      typeof threshold === 'number' && threshold >= 0 && threshold <= 100
+        ? threshold : defaultMonitorAiThreshold,
+    ))
     setFormEnabled(channel.enabled)
     setIsModalOpen(true)
   }
@@ -237,6 +245,14 @@ export function NotificationChannels() {
 
       // 显式保存全选，区分“用户选择全类型”和“旧客户端未提交字段”。
       config.notify_types = [...formNotifyTypes]
+      if (formNotifyTypes.includes('monitor_ai') || editingChannel?.config?.[monitorAiThresholdKey] !== undefined) {
+        const threshold = Number(formMonitorAiThreshold)
+        if (!formMonitorAiThreshold.trim() || !Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
+          addToast({ type: 'error', message: '请输入 0 到 100 之间的置信度阈值' })
+          return
+        }
+        config[monitorAiThresholdKey] = threshold
+      }
 
       const data = {
         name: formName.trim(),
@@ -289,6 +305,8 @@ export function NotificationChannels() {
           </button>
         </div>
       )}
+
+      {allNotifyTypes.includes('monitor_ai') && <MonitorOpenRouterKeyForm />}
 
       <NotificationChannelList
         channels={channels}
@@ -360,6 +378,9 @@ export function NotificationChannels() {
                           </span>
                           <button
                             type="button"
+                            role="switch"
+                            aria-label={definition.label}
+                            aria-checked={typeOn}
                             onClick={() => toggleFormNotifyType(definition.value)}
                             title={notifyTypeHints[definition.value]}
                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -374,6 +395,25 @@ export function NotificationChannels() {
                           </button>
                         </div>
                       </div>
+                      {definition.value === 'monitor_ai' && typeOn && (
+                        <div className="my-3">
+                          <label htmlFor="monitor-ai-threshold" className="input-label">置信度阈值（%）</label>
+                          <input
+                            id="monitor-ai-threshold"
+                            className="input-ios w-32"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step="any"
+                            required
+                            value={formMonitorAiThreshold}
+                            onChange={(event) => setFormMonitorAiThreshold(event.target.value)}
+                          />
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                            每轮把适合买入、可直拍且置信度高于阈值的商品合成一条通知。OpenRouter 密钥可在通知渠道页面配置。
+                          </p>
+                        </div>
+                      )}
                       <textarea
                         value={formTemplates[definition.value]}
                         onChange={(event) => setFormTemplates((templates) => ({

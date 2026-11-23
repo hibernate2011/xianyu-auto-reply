@@ -29,7 +29,9 @@ export function useNotificationTypeOptions(enabled: boolean, accountOnly = false
         setError(result.message || '加载通知类型失败')
         return
       }
-      const values = (result.data?.notify_types || []).filter((item) => !accountOnly || item.value !== 'monitor')
+      const values = (result.data?.notify_types || []).filter(
+        (item) => !accountOnly || ['chat', 'delivery', 'account'].includes(item.value),
+      )
       const requiredTypes = accountOnly ? ['chat', 'delivery', 'account'] : ['chat', 'delivery', 'account', 'monitor']
       if (!requiredTypes.every((type) => values.some((item) => item.value === type && item.label))) {
         setOptions([])

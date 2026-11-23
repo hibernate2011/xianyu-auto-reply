@@ -19,7 +19,15 @@ from urllib.parse import quote
 
 from loguru import logger
 from sqlalchemy import delete, select
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.core.config import get_settings
+from app.services.scheduler.listing_monitor_ai import (
+    MonitorDecisionError,
+    decide_monitor_items,
+    format_recommended_items,
+    listing_description,
+)
 from common.db.session import async_session_maker
 from common.models.listing_monitor_item import ListingMonitorItem
 from common.models.listing_monitor_log import ListingMonitorLog
@@ -32,9 +40,15 @@ from common.services.listing_monitor_filters import (
     enrich_from_detail,
     matches_text_filters,
 )
-from common.services.notification_dispatcher import send_monitor_item_notification
+from common.services.notification_dispatcher import send_monitor_ai_notification, send_monitor_item_notification
+from common.services.notification_types import (
+    MONITOR_AI_NOTIFICATION_TYPE,
+    monitor_ai_threshold,
+    resolve_stored_notification_types,
+)
 from common.services.collect_account_loader import merge_task_and_fallback_account_ids
 from common.services.monitor_remote_risk_client import solve_remote_risk
+from common.services.monitor_openrouter_config import get_monitor_openrouter_key
 from common.services.monitor_remote_risk_config import (
     get_remote_risk_config,
     is_remote_risk_enabled,
@@ -45,6 +59,7 @@ from common.services.xianyu_order_client import XianyuOrderClient
 from common.services.xianyu_detail_client import XianyuItemDetailClient
 from common.services.xianyu_search_client import XianyuSearchClient, parse_search_item
 from common.utils.cookie_refresh import merge_cookies, update_account_cookies_in_db
+from common.utils.notification_config import parse_notification_config
 from common.utils.time_utils import BEIJING_TZ, get_beijing_now_naive
 
 # 监控类型 -> (sortField, sortValue)
@@ -530,16 +545,20 @@ class ListingMonitorTaskService:
                 status = "partial" if pages_collected > 0 else "failed"
 
         fetched_count = len(all_items)
-        all_items = await self._filter_items(task, all_items, accounts, task_proxy)
-        matched_count = len(all_items)
-        inserted_count, updated_count, new_items = await self._upsert_items(task, all_items)
-        notified_count = await self._notify_new_items(task, new_items)
+        matched_items = await self._filter_items(task, all_items, accounts, task_proxy)
+        matched_count = len(matched_items)
+        inserted_count, updated_count, new_items = await self._upsert_items(task, matched_items)
+        channels = await self._load_notification_channels(task) if all_items else []
+        notified_count = await self._notify_new_items(task, new_items, channels)
+        ai_summary = await self._notify_ai_items(task, all_items, matched_items, accounts, task_proxy, channels)
 
         if status == "success" and not message:
             message = (
                 f"采集{pages_collected}页，获取{fetched_count}，筛选匹配{matched_count}，"
                 f"新增{inserted_count}，更新{updated_count}，通知成功{notified_count}次"
             )
+        if ai_summary:
+            message = "；".join(filter(None, (message, ai_summary)))
 
         # 本次用过远程过风控则在日志说明中体现，便于在监控日志页直接看到效果
         if remote_risk_passed or remote_risk_failed or remote_risk_limited:
@@ -593,23 +612,10 @@ class ListingMonitorTaskService:
 
         matched: List[dict] = []
         for item in cheap_matches:
-            enriched: Optional[dict] = None
-            for account in accounts:
-                client = XianyuItemDetailClient(
-                    account.account_id,
-                    account.cookie,
-                    owner_id=account.owner_id,
-                    proxy=proxy,
-                )
-                result = await client.get_detail(str(item["item_id"]))
-                account.cookie = client.cookies_str
-                if result.get("success"):
-                    enriched = enrich_from_detail(item, result.get("detail"))
-                    break
-                if not result.get("account_invalid"):
-                    break
-            if enriched is None:
+            detail = await self._get_item_detail(str(item["item_id"]), accounts, proxy)
+            if detail is None:
                 continue
+            enriched = enrich_from_detail(item, detail)
             if task.min_seller_credit_level and (
                 enriched.get("seller_credit_level") is None
                 or int(enriched["seller_credit_level"]) < int(task.min_seller_credit_level)
@@ -618,6 +624,24 @@ class ListingMonitorTaskService:
             matched.append(enriched)
             await asyncio.sleep(0.15)
         return matched
+
+    async def _get_item_detail(
+        self, item_id: str, accounts: List[XYAccount], proxy: Optional[str]
+    ) -> Optional[dict]:
+        for account in accounts:
+            client = XianyuItemDetailClient(
+                account.account_id,
+                account.cookie,
+                owner_id=account.owner_id,
+                proxy=proxy,
+            )
+            result = await client.get_detail(item_id)
+            account.cookie = client.cookies_str
+            if result.get("success"):
+                return result.get("detail") or {}
+            if not result.get("account_invalid"):
+                break
+        return None
 
     async def _upsert_items(self, task: ListingMonitorTask, items: List[dict]) -> tuple[int, int, List[dict]]:
         """将采集商品 upsert 到采集商品表，返回新增数、更新数及新增商品。"""
@@ -758,21 +782,23 @@ class ListingMonitorTaskService:
             await session.commit()
         return inserted, updated, new_items
 
-    async def _notify_new_items(self, task: ListingMonitorTask, items: List[dict]) -> int:
-        """仅对本次首次入库的匹配商品推送已启用渠道。
+    async def _load_notification_channels(self, task: ListingMonitorTask) -> List[NotificationChannel]:
+        """读取适用于该任务的已启用通知渠道。
 
         历史任务若保存了渠道 ID，继续只向这些渠道推送；新任务未指定渠道时，
         默认使用任务所属用户的全部已启用渠道。这样即使前端不再展示任务级
         渠道选择器，商品监控通知仍能复用“通知渠道”页面的现有配置。
         """
         channel_ids = [int(value) for value in (task.notification_channel_ids or []) if str(value).isdigit()]
-        if not items:
-            return 0
         if not channel_ids and task.owner_id is None:
             logger.warning("【{}】任务没有所属用户，无法安全选择默认通知渠道", task.keyword)
-            return 0
+            return []
         async with async_session_maker() as session:
-            stmt = select(NotificationChannel).where(NotificationChannel.enabled.is_(True))
+            active_channels = select(NotificationChannel).where(
+                NotificationChannel.enabled.is_(True),
+                NotificationChannel.is_deleted.is_(False),
+            )
+            stmt = active_channels
             if channel_ids:
                 stmt = stmt.where(NotificationChannel.id.in_(channel_ids))
             if task.owner_id is not None:
@@ -781,22 +807,17 @@ class ListingMonitorTaskService:
             # 历史任务可能仍引用已经删除或停用的渠道。任务级渠道选择器已从
             # 前端移除，此时回退到该用户当前启用的渠道，避免任务永久静默。
             if not channels and channel_ids and task.owner_id is not None:
-                fallback_stmt = select(NotificationChannel).where(
-                    NotificationChannel.enabled.is_(True),
-                    NotificationChannel.owner_id == task.owner_id,
-                )
+                fallback_stmt = active_channels.where(NotificationChannel.owner_id == task.owner_id)
                 channels = list((await session.execute(fallback_stmt)).scalars().all())
+        return channels
 
+    async def _notify_new_items(
+        self, task: ListingMonitorTask, items: List[dict], channels: List[NotificationChannel]
+    ) -> int:
         success_count = 0
         for item in items:
-            item_id = str(item.get("item_id") or "")
-            # 搜索接口的 targetUrl 可能是跳转协议、跟踪地址甚至首页。
-            # 通知中始终使用可直接打开的标准商品详情页，避免发送首页链接。
-            item_url = (
-                f"https://www.goofish.com/item?id={quote(item_id, safe='')}"
-                if item_id
-                else str(item.get("target_url") or "").strip()
-            )
+            item_id = str(item["item_id"])
+            item_url = f"https://h5.m.goofish.com/item?id={quote(item_id, safe='')}"
             context = {
                 "task_name": task.keyword,
                 "task_id": task.id,
@@ -816,6 +837,87 @@ class ListingMonitorTaskService:
                 if await send_monitor_item_notification(channel, context, owner_id=task.owner_id):
                     success_count += 1
         return success_count
+
+    async def _notify_ai_items(
+        self,
+        task: ListingMonitorTask,
+        items: List[dict],
+        matched_items: List[dict],
+        accounts: List[XYAccount],
+        proxy: Optional[str],
+        channels: List[NotificationChannel],
+    ) -> str:
+        destinations = []
+        for channel in channels:
+            # 存量无归属任务可能保存了跨用户渠道 ID，AI 仅处理归属明确的任务。
+            if task.owner_id is None or channel.owner_id != task.owner_id:
+                continue
+            try:
+                config = parse_notification_config(channel.config_payload)
+                types, _ = resolve_stored_notification_types(config.get("notify_types"))
+                if MONITOR_AI_NOTIFICATION_TYPE in types:
+                    destinations.append((channel, monitor_ai_threshold(config)))
+            except ValueError:
+                logger.warning("跳过配置无效的 AI 商品购买推荐渠道：channel_id={}", channel.id)
+        if not destinations or not items:
+            return ""
+
+        try:
+            async with async_session_maker() as session:
+                personal_key = await get_monitor_openrouter_key(session, task.owner_id)
+        except SQLAlchemyError:
+            return "AI 商品购买推荐未执行，读取用户 OpenRouter API Key 失败"
+        api_key = personal_key or get_settings().openrouter_api_key.strip()
+        if not api_key:
+            return "AI 商品购买推荐未执行，请在通知渠道配置 OpenRouter API Key"
+
+        collected = {str(item["item_id"]): item for item in items}
+        matched = {str(item["item_id"]): item for item in matched_items}
+        collected.update(matched)
+        # 在有限时间内补齐详情；拿不到详情的商品仍提交标题等已有数据，由模型判断证据是否充分。
+        try:
+            async with asyncio.timeout(20):
+                for item_id, item in matched.items():
+                    if item.get("detail") or listing_description(item):
+                        continue
+                    detail = await self._get_item_detail(item_id, accounts, proxy)
+                    if detail:
+                        collected[item_id] = {**item, "detail": detail}
+                    await asyncio.sleep(0.15)
+        except TimeoutError:
+            logger.info("监控任务 {} 补查商品详情超时，使用本轮已获取的信息", task.id)
+        except Exception:
+            logger.warning("监控任务 {} 补查商品详情失败，使用本轮已获取的信息", task.id)
+
+        requirements = {
+            "搜索关键词": task.keyword,
+            "最低价": str(task.price_min) if task.price_min is not None else None,
+            "最高价": str(task.price_max) if task.price_max is not None else None,
+            "包含词": task.include_keywords or [],
+            "排除词": task.exclude_keywords or [],
+        }
+        try:
+            recommendations, answered = await decide_monitor_items(api_key, requirements, collected, set(matched))
+        except MonitorDecisionError as exc:
+            return f"AI 商品购买推荐失败，{exc}"
+
+        notified_count = 0
+        time = get_beijing_now_naive().strftime("%Y-%m-%d %H:%M:%S")
+        for channel, threshold in destinations:
+            selected = {item_id: score for item_id, score in recommendations.items() if score > threshold / 100}
+            if not selected:
+                continue
+            context = {
+                "task_name": task.keyword,
+                "task_id": task.id,
+                "keyword": task.keyword,
+                "item_count": len(selected),
+                "items": format_recommended_items(collected, selected),
+                "time": time,
+            }
+            if await send_monitor_ai_notification(channel, context, owner_id=task.owner_id):
+                notified_count += 1
+        return f"AI 商品购买推荐有效判断 {answered}/{len(collected)} 件，通知成功 {notified_count} 条"
 
     async def _direct_order_item(
         self,

@@ -26,7 +26,7 @@ from loguru import logger
 
 from app.core.config import get_settings
 from common.db.init_database import ddl_connection, init_advisory_lock
-from common.db.notification_schema import ensure_monitor_email_operation
+from common.db.notification_schema import ensure_monitor_notification_schema
 from common.db.redis_client import close_redis_client, initialize_redis_client
 from common.db.scheduled_publish_rule_schema import ensure_scheduled_publish_rule_schema
 from common.utils.logging_utils import setup_logging
@@ -78,12 +78,12 @@ async def lifespan(app: FastAPI):
         logger.error("数据库连接失败，服务退出")
         sys.exit(1)
 
-    # 调度服务可能单独升级；运行任务前补齐定时发布表结构和上新邮件字典。
+    # 调度服务可能单独升级，运行任务前补齐定时发布和商品监控所需结构。
     try:
         async with init_advisory_lock():
             async with ddl_connection() as conn:
                 await ensure_scheduled_publish_rule_schema(conn)
-                await ensure_monitor_email_operation(conn)
+                await ensure_monitor_notification_schema(conn)
     except Exception:
         logger.exception("调度服务数据库自检失败，服务退出")
         raise

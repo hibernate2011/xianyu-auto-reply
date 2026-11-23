@@ -3,6 +3,20 @@ import type { ApiResponse, NotificationChannel, MessageNotification, NotifyType 
 
 const CHANNEL_PREFIX = '/api/v1/notification-channels'
 const MESSAGE_PREFIX = '/api/v1/message-notifications'
+const AI_MONITOR_KEY = `${CHANNEL_PREFIX}/ai-monitor-key`
+
+interface MonitorOpenRouterKeyStatus {
+  configured: boolean
+}
+
+export const getMonitorOpenRouterKeyStatus = () =>
+  get<ApiResponse<MonitorOpenRouterKeyStatus>>(AI_MONITOR_KEY)
+
+export const saveMonitorOpenRouterKey = (apiKey: string) =>
+  put<ApiResponse<MonitorOpenRouterKeyStatus>>(AI_MONITOR_KEY, { api_key: apiKey })
+
+export const clearMonitorOpenRouterKey = () =>
+  del<ApiResponse<MonitorOpenRouterKeyStatus>>(AI_MONITOR_KEY)
 
 // ========== 通知渠道 ==========
 
@@ -218,8 +232,9 @@ export const getMessageNotificationPage = async (
         enabled: item.enabled,
         subscription_enabled: item.subscription_enabled ?? item.enabled,
         channel_enabled: item.channel_enabled ?? true,
-        // 旧后端仍可能返回渠道专属的上新事件；保留空数组与缺省值的区别。
-        notify_types: item.notify_types?.filter((type) => type !== 'monitor') as MessageNotification['notify_types'],
+        notify_types: item.notify_types?.filter((type) =>
+          ['chat', 'delivery', 'account'].includes(type),
+        ) as MessageNotification['notify_types'],
       })),
     },
   }

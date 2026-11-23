@@ -1,13 +1,23 @@
 """提供通知渠道、账号绑定及通知事件字典接口。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from contextlib import suppress
+
+from fastapi import APIRouter, Depends, Query, Request, Response
 from loguru import logger
+from pydantic import BaseModel, SecretStr
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from common.models.user import User
 from common.schemas.common import ApiResponse
 from common.services.email_log_service import EMAIL_OPERATION_NOTIFICATION_CHANNEL_TEST, record_email_log
+from common.services.monitor_openrouter_config import (
+    MONITOR_OPENROUTER_KEY_MAX_LENGTH,
+    get_monitor_openrouter_key,
+    set_monitor_openrouter_key,
+)
 from common.utils.http_utils import get_client_ip
 from common.utils.time_utils import get_beijing_now_naive
 from common.utils.notification_utils import parse_notification_config
@@ -28,6 +38,60 @@ from app.services.notification_service import (
 
 channels_router = APIRouter(prefix="/notification-channels", tags=["notifications"])
 messages_router = APIRouter(prefix="/message-notifications", tags=["notifications"])
+
+
+class MonitorOpenRouterKeyRequest(BaseModel):
+    api_key: SecretStr
+
+
+@channels_router.get("/ai-monitor-key", response_model=ApiResponse)
+async def get_ai_monitor_key_status(
+    response: Response,
+    current_user: User = Depends(deps.get_current_active_user),
+    session: AsyncSession = Depends(deps.get_db_session),
+) -> ApiResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        configured = bool(await get_monitor_openrouter_key(session, current_user.id))
+    except SQLAlchemyError:
+        logger.warning("读取 OpenRouter 密钥状态失败，user_id={}", current_user.id)
+        return ApiResponse(success=False, code=40001, message="读取 OpenRouter 密钥状态失败")
+    return ApiResponse(success=True, data={"configured": configured})
+
+
+@channels_router.put("/ai-monitor-key", response_model=ApiResponse)
+async def save_ai_monitor_key(
+    payload: MonitorOpenRouterKeyRequest,
+    current_user: User = Depends(deps.get_current_active_user),
+    session: AsyncSession = Depends(deps.get_db_session),
+) -> ApiResponse:
+    api_key = payload.api_key.get_secret_value().strip()
+    if (
+        not api_key
+        or len(api_key) > MONITOR_OPENROUTER_KEY_MAX_LENGTH
+        or any(not "!" <= character <= "~" for character in api_key)
+    ):
+        return ApiResponse(success=False, code=40001, message="请输入有效的 OpenRouter API Key")
+    return await _change_ai_monitor_key(session, current_user.id, api_key)
+
+
+@channels_router.delete("/ai-monitor-key", response_model=ApiResponse)
+async def clear_ai_monitor_key(
+    current_user: User = Depends(deps.get_current_active_user),
+    session: AsyncSession = Depends(deps.get_db_session),
+) -> ApiResponse:
+    return await _change_ai_monitor_key(session, current_user.id, None)
+
+
+async def _change_ai_monitor_key(session: AsyncSession, owner_id: int, api_key: str | None) -> ApiResponse:
+    try:
+        await set_monitor_openrouter_key(session, owner_id, api_key)
+    except SQLAlchemyError:
+        with suppress(SQLAlchemyError):
+            await session.rollback()
+        logger.warning("更新 OpenRouter 密钥失败，user_id={}", owner_id)
+        return ApiResponse(success=False, code=40001, message="更新 OpenRouter 密钥失败")
+    return ApiResponse(success=True, data={"configured": api_key is not None})
 
 
 @channels_router.get("")

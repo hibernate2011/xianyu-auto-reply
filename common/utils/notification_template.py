@@ -13,6 +13,7 @@ TEMPLATE_CONFIG_KEYS = {
     "delivery": "delivery_template",
     "account": "account_template",
     "monitor": "monitor_template",
+    "monitor_ai": "monitor_ai_template",
 }
 
 TEMPLATE_VARIABLES = {
@@ -70,6 +71,7 @@ TEMPLATE_VARIABLES = {
         "item_url",
         "time",
     },
+    "monitor_ai": {"task_name", "task_id", "keyword", "item_count", "items", "time"},
 }
 
 _PLACEHOLDER_RE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
@@ -101,6 +103,10 @@ def validate_notification_template(template: Any, template_type: str) -> str | N
     unknown_variables = sorted({match.group(1) for match in matches} - allowed_variables)
     if unknown_variables:
         return f"不支持的占位符: {', '.join(unknown_variables)}"
+    if template_type == "monitor_ai" and template.strip() and not any(
+        match.group(1) == "items" for match in matches
+    ):
+        return "AI 商品购买推荐模板必须包含 {{items}}"
     return None
 
 
@@ -114,6 +120,7 @@ def validate_notification_templates(config_data: Mapping[str, Any] | None) -> st
         "delivery": "自动发货",
         "account": "账号异常",
         "monitor": "商品监控",
+        "monitor_ai": "AI 商品购买推荐",
     }
     for template_type, config_key in TEMPLATE_CONFIG_KEYS.items():
         if config_key not in config_data or config_data[config_key] is None:

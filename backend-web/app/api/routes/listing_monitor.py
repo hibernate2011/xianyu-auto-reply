@@ -296,7 +296,8 @@ async def run_listing_monitor_task(
     http_client = get_http_client()
     url = f"{settings.scheduler_service_url}/internal/tasks/listing_monitor/run/{task_id}"
     try:
-        resp = await http_client.post(url)
+        # AI 补查和推送与本轮采集同步完成，超时后自动重试可能触发第二轮。
+        resp = await http_client.post(url, timeout=80, max_retries=1)
     except Exception as exc:  # noqa: BLE001
         return ApiResponse(success=False, message=f"调用采集服务失败：{exc}")
     if not isinstance(resp, dict) or not resp.get("success"):

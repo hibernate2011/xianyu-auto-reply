@@ -9,6 +9,9 @@
 import { Bell, Link, Mail, MessageCircle, Send, Smartphone } from 'lucide-react'
 import type { NotifyType } from '@/types'
 
+export const defaultMonitorAiThreshold = 60
+export const monitorAiThresholdKey = 'monitor_ai_confidence_threshold'
+
 export const channelTypes = [
   {
     type: 'dingtalk',
@@ -110,9 +113,18 @@ export const templateConfigKeys: Record<NotifyType, string> = {
   delivery: 'delivery_template',
   account: 'account_template',
   monitor: 'monitor_template',
+  monitor_ai: 'monitor_ai_template',
 }
 
 export const templateVariables: Record<NotifyType, Array<{ name: string; label: string }>> = {
+  monitor_ai: [
+    { name: 'task_name', label: '任务名称' },
+    { name: 'task_id', label: '任务 ID' },
+    { name: 'keyword', label: '监控关键词' },
+    { name: 'item_count', label: '推荐商品数量' },
+    { name: 'items', label: '商品清单（标题、价格、置信度、链接）' },
+    { name: 'time', label: '触发时间' },
+  ],
   chat: [
     { name: 'account', label: '闲鱼账号' },
     { name: 'account_id', label: '账号 ID' },
@@ -170,6 +182,13 @@ export const templateVariables: Record<NotifyType, Array<{ name: string; label: 
 }
 
 export const defaultTemplates: Record<NotifyType, string> = {
+  monitor_ai: `【AI 商品购买推荐】
+任务: {{task_name}}
+推荐商品: {{item_count}} 件
+
+{{items}}
+
+时间: {{time}}`,
   chat: `【闲鱼消息】
 闲鱼账号: {{account}}
 发送者: {{buyer_nick}}
@@ -215,6 +234,7 @@ export const notifyTypeHints: Record<NotifyType, string> = {
   delivery: '每次自动发货结果推送一次',
   account: '账号掉线、Cookie 到期或 Token 刷新失败时推送',
   monitor: '监控任务首次采集到符合筛选条件的商品时推送',
+  monitor_ai: '每轮批量判断购买匹配度和能否直拍，将达到推送条件的商品合成一条通知',
 }
 
 export const channelTypeLabels: Record<string, string> = Object.fromEntries(
@@ -236,15 +256,15 @@ export function getChannelConfigHint(type: ChannelType): string {
 }
 
 export function parseNotifyTypes(raw: unknown, allowedTypes: NotifyType[]): NotifyType[] {
-  if (raw === undefined || raw === null) return [...allowedTypes]
-  if (!Array.isArray(raw) && typeof raw !== 'string') return [...allowedTypes]
+  const defaults = allowedTypes.filter((type) => type !== 'monitor_ai')
+  if (!Array.isArray(raw) && typeof raw !== 'string') return defaults
   const items = Array.isArray(raw) ? raw : raw.split(',')
-  if (items.some((value) => typeof value !== 'string')) return [...allowedTypes]
+  if (items.some((value) => typeof value !== 'string')) return defaults
   const selected = new Set(items.map((value) => String(value).trim()).filter(Boolean))
-  if ([...selected].some((value) => !allowedTypes.includes(value as NotifyType))) return [...allowedTypes]
+  if ([...selected].some((value) => !Object.keys(templateConfigKeys).includes(value))) return defaults
   const picked = allowedTypes.filter((type) => selected.has(type))
   // 历史异常值按全类型兼容，避免升级后已有渠道停止通知。
-  return picked.length > 0 ? picked : [...allowedTypes]
+  return selected.size > 0 ? picked : defaults
 }
 
 export function getTemplateValidationError(template: string, templateType: NotifyType): string | null {
@@ -259,6 +279,9 @@ export function getTemplateValidationError(template: string, templateType: Notif
   const unknownVariables = [...new Set(
     placeholders.map((match) => match[1]).filter((name) => !knownVariables.has(name)),
   )]
+  if (templateType === 'monitor_ai' && !placeholders.some((match) => match[1] === 'items')) {
+    return '必须包含 {{items}} 商品清单'
+  }
   return unknownVariables.length > 0 ? `不支持的占位符: ${unknownVariables.join(', ')}` : null
 }
 
@@ -266,7 +289,7 @@ export function splitTemplateConfig(config?: Record<string, unknown>) {
   const templates: Record<NotifyType, string> = { ...defaultTemplates }
   const channelConfig: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(config || {})) {
-    if (key === 'notify_types') continue
+    if (key === 'notify_types' || key === monitorAiThresholdKey) continue
     const templateType = (Object.keys(templateConfigKeys) as NotifyType[])
       .find((type) => templateConfigKeys[type] === key)
     if (templateType) {

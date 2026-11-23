@@ -13,8 +13,11 @@ from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.schema import CreateTable
 
-from common.services.email_log_service import EMAIL_OPERATION_MONITOR_NOTIFICATION
+from common.services.email_log_service import EMAIL_OPERATION_MONITOR_AI_NOTIFICATION, EMAIL_OPERATION_MONITOR_NOTIFICATION
+from common.services.monitor_openrouter_config import monitor_openrouter_keys
+from common.services.notification_types import MONITOR_AI_NOTIFICATION_TYPE, NOTIFICATION_TYPE_DICTIONARY
 
 
 NOTIFICATION_COLUMNS = (
@@ -124,12 +127,31 @@ async def ensure_notification_schema(conn: AsyncConnection) -> None:
         if not verified:
             raise RuntimeError(f"通知模块关键索引缺失：{table_name}.{index_name}")
 
-    await ensure_monitor_email_operation(conn)
+    await ensure_monitor_notification_schema(conn)
     logger.info("通知模块数据库结构自检完成，历史数据保持不变")
 
 
+async def ensure_monitor_notification_schema(conn: AsyncConnection) -> None:
+    """补齐商品监控的专用凭据表和通知字典。"""
+    await conn.execute(CreateTable(monitor_openrouter_keys, if_not_exists=True))
+    await ensure_monitor_email_operation(conn)
+    await conn.execute(
+        text(
+            "INSERT INTO xy_data_dictionaries "
+            "(dict_type, dict_value, dict_label, sort_order, enabled) "
+            "VALUES (:dict_type, :dict_value, :dict_label, 50, 1) "
+            "ON DUPLICATE KEY UPDATE id = id"
+        ),
+        {
+            "dict_type": NOTIFICATION_TYPE_DICTIONARY,
+            "dict_value": MONITOR_AI_NOTIFICATION_TYPE,
+            "dict_label": "AI 商品购买推荐",
+        },
+    )
+
+
 async def ensure_monitor_email_operation(conn: AsyncConnection) -> None:
-    """补齐上新监控邮件字典项，重复执行时保留已有配置。
+    """补齐商品监控邮件字典项，重复执行时保留已有配置。
 
     Args:
         conn: 启动自检使用的异步数据库连接。
@@ -143,14 +165,20 @@ async def ensure_monitor_email_operation(conn: AsyncConnection) -> None:
             "VALUES (:dict_type, :dict_value, :dict_label, :sort_order, 1) "
             "ON DUPLICATE KEY UPDATE id = id"
         ),
-        {
-            "dict_type": "email_trigger_operation",
-            "dict_value": EMAIL_OPERATION_MONITOR_NOTIFICATION,
-            "dict_label": "上新监控邮件",
-            "sort_order": 70,
-        },
+        [
+            {
+                "dict_type": "email_trigger_operation",
+                "dict_value": value,
+                "dict_label": label,
+                "sort_order": position,
+            }
+            for value, label, position in (
+                (EMAIL_OPERATION_MONITOR_NOTIFICATION, "上新监控邮件", 70),
+                (EMAIL_OPERATION_MONITOR_AI_NOTIFICATION, "AI 商品购买推荐邮件", 80),
+            )
+        ],
     )
-    logger.info("上新监控邮件字典自检完成")
+    logger.info("商品监控邮件字典自检完成")
 
 
-__all__ = ["ensure_monitor_email_operation", "ensure_notification_schema"]
+__all__ = ["ensure_monitor_notification_schema", "ensure_notification_schema"]

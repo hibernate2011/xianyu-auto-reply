@@ -67,6 +67,8 @@ def _compile_sql_with_params(statement, parameters):
     """
     try:
         sql_str = str(statement)
+        if "xy_monitor_openrouter_keys" in sql_str.lower():
+            return sql_str
 
         # SQL 回显用于排查问题，但不能把系统密钥写入日志。系统设置表中的
         # 敏感键可能通过 ORM 参数绑定出现，先识别键再仅脱敏对应值。

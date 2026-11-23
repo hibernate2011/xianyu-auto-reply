@@ -13,8 +13,11 @@ from collections.abc import Iterable
 
 NOTIFICATION_TYPE_DICTIONARY = "notification_type"
 DEFAULT_NOTIFICATION_TYPES = ("chat", "delivery", "account", "monitor")
-# 上新监控按任务所属用户选择渠道，不属于账号绑定事件。
-ACCOUNT_NOTIFICATION_TYPES = tuple(value for value in DEFAULT_NOTIFICATION_TYPES if value != "monitor")
+MONITOR_AI_NOTIFICATION_TYPE = "monitor_ai"
+CHANNEL_NOTIFICATION_TYPES = (*DEFAULT_NOTIFICATION_TYPES, MONITOR_AI_NOTIFICATION_TYPE)
+ACCOUNT_NOTIFICATION_TYPES = ("chat", "delivery", "account")
+MONITOR_AI_THRESHOLD_KEY = "monitor_ai_confidence_threshold"
+DEFAULT_MONITOR_AI_THRESHOLD = 60
 
 
 class NotificationTypeValueError(ValueError):
@@ -42,12 +45,20 @@ def normalize_notification_types(value: object) -> tuple[str, ...]:
     if not normalized:
         raise NotificationTypeValueError("请至少选择一种通知类型")
 
-    invalid = sorted(set(normalized).difference(DEFAULT_NOTIFICATION_TYPES))
+    invalid = sorted(set(normalized).difference(CHANNEL_NOTIFICATION_TYPES))
     if invalid:
         raise NotificationTypeValueError(f"通知类型包含不支持的值：{', '.join(invalid)}")
 
     selected = set(normalized)
-    return tuple(item for item in DEFAULT_NOTIFICATION_TYPES if item in selected)
+    return tuple(item for item in CHANNEL_NOTIFICATION_TYPES if item in selected)
+
+
+def monitor_ai_threshold(config: dict) -> float:
+    """读取渠道配置中的百分比阈值，缺省为 60。"""
+    value = config.get(MONITOR_AI_THRESHOLD_KEY, DEFAULT_MONITOR_AI_THRESHOLD)
+    if type(value) not in (int, float) or not 0 <= value <= 100:
+        raise NotificationTypeValueError("AI 商品推送的置信度阈值必须是 0 到 100 之间的百分比")
+    return value
 
 
 def resolve_stored_notification_types(value: object) -> tuple[tuple[str, ...], bool]:
@@ -69,9 +80,12 @@ def resolve_stored_notification_types(value: object) -> tuple[tuple[str, ...], b
 
 __all__ = [
     "ACCOUNT_NOTIFICATION_TYPES",
+    "CHANNEL_NOTIFICATION_TYPES",
     "DEFAULT_NOTIFICATION_TYPES",
+    "MONITOR_AI_NOTIFICATION_TYPE",
     "NOTIFICATION_TYPE_DICTIONARY",
     "NotificationTypeValueError",
+    "monitor_ai_threshold",
     "normalize_notification_types",
     "resolve_stored_notification_types",
 ]

@@ -13,7 +13,10 @@ from common.schemas.notification import NotificationChannelCreate, NotificationC
 from common.utils.notification_template import validate_notification_templates
 from common.utils.notification_config import parse_notification_config
 from common.services.notification_types import (
+    MONITOR_AI_NOTIFICATION_TYPE,
+    MONITOR_AI_THRESHOLD_KEY,
     NotificationTypeValueError,
+    monitor_ai_threshold,
     normalize_notification_types,
     resolve_stored_notification_types,
 )
@@ -122,7 +125,12 @@ class NotificationChannelService:
                     logger.warning("更新渠道时发现历史配置格式错误，以本次显式提交的配置修复：channel_id={}", channel_id)
                     previous = {}
                 if "notify_types" in previous:
-                    config["notify_types"] = list(resolve_stored_notification_types(previous["notify_types"])[0])
+                    types, _ = resolve_stored_notification_types(previous["notify_types"])
+                    config["notify_types"] = list(types)
+                    if MONITOR_AI_NOTIFICATION_TYPE in types:
+                        for key in (MONITOR_AI_THRESHOLD_KEY, "monitor_ai_template"):
+                            if key in previous:
+                                config.setdefault(key, previous[key])
             self._validate_template_config(config)
             self._validate_notify_types(config)
 
@@ -205,10 +213,12 @@ class NotificationChannelService:
         Raises:
             NotificationTypeValidationError: notify_types 格式错误、为空或包含未知值。
         """
-        if not config or "notify_types" not in config:
+        if not config:
             return
         try:
-            config["notify_types"] = list(normalize_notification_types(config["notify_types"]))
+            monitor_ai_threshold(config)
+            if "notify_types" in config:
+                config["notify_types"] = list(normalize_notification_types(config["notify_types"]))
         except NotificationTypeValueError as error:
             raise NotificationTypeValidationError(str(error)) from error
 

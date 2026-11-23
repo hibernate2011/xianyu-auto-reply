@@ -1,4 +1,4 @@
-"""渲染上新监控通知，复用公共渠道分发并记录邮件发送结果。"""
+"""渲染商品监控通知，复用公共渠道分发并记录邮件发送结果。"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,8 +6,12 @@ from typing import Any
 from loguru import logger
 
 from common.models.notification_channel import NotificationChannel
-from common.services.email_log_service import EMAIL_OPERATION_MONITOR_NOTIFICATION, record_email_log
-from common.services.notification_types import resolve_stored_notification_types
+from common.services.email_log_service import (
+    EMAIL_OPERATION_MONITOR_AI_NOTIFICATION,
+    EMAIL_OPERATION_MONITOR_NOTIFICATION,
+    record_email_log,
+)
+from common.services.notification_types import MONITOR_AI_NOTIFICATION_TYPE, resolve_stored_notification_types
 from common.utils.notification_config import parse_notification_config
 from common.utils.notification_dispatch import dispatch_notification
 from common.utils.notification_template import render_notification_template
@@ -48,41 +52,7 @@ async def send_monitor_item_notification(
     *,
     owner_id: int | None = None,
 ) -> bool:
-    """按渠道级开关发送商品监控通知，邮件成功、失败及配置拒绝均记录日志。
-
-    Args:
-        channel: 任务所属用户的通知渠道。
-        context: 商品与任务的模板变量。
-        owner_id: 触发监控任务的用户ID。
-    Returns:
-        渠道确认发送成功时返回True，关闭或发送失败时返回False。
-        调度任务没有客户端请求，邮件日志中的客户端IP保持空值。
-    """
-    channel_type = str(channel.channel_type or "").strip().lower()
-    try:
-        config = parse_notification_config(channel.config_payload)
-    except ValueError as exc:
-        logger.exception("上新通知渠道配置无效：channel_id={}, owner_id={}", channel.id, owner_id)
-        if channel_type == "email":
-            await record_email_log(
-                recipient_email="",
-                trigger_operation=EMAIL_OPERATION_MONITOR_NOTIFICATION,
-                success=False,
-                owner_id=owner_id,
-                result_message=str(exc),
-            )
-        return False
-    notify_types, fallback = resolve_stored_notification_types(config.get("notify_types"))
-    if fallback:
-        logger.warning(
-            "渠道 {}({}) 的通知类型配置异常，已按全类型兼容",
-            channel.name,
-            channel.id,
-        )
-    if "monitor" not in notify_types:
-        logger.info("渠道 {}({}) 已关闭上新监控通知", channel.name, channel.id)
-        return False
-
+    """发送一条首次采集商品通知。"""
     default_message = (
         "【闲鱼商品监控】\n"
         f"任务: {context.get('task_name', '未知')}\n\n"
@@ -96,23 +66,79 @@ async def send_monitor_item_notification(
         f"链接: {context.get('item_url', '')}\n"
         f"时间: {context.get('time', '')}"
     )
-    message = render_notification_template(
-        config, "monitor", context, default_message
+    return await _send_monitor_notification(channel, "monitor", context, default_message, owner_id)
+
+
+async def send_monitor_ai_notification(
+    channel: NotificationChannel,
+    context: dict[str, Any],
+    *,
+    owner_id: int | None = None,
+) -> bool:
+    """每个通知渠道发送该轮通过 AI 和阈值筛选的商品清单。"""
+    default_message = (
+        "【AI 商品购买推荐】\n"
+        f"任务: {context['task_name']}\n"
+        f"推荐商品: {context['item_count']} 件\n\n"
+        f"{context['items']}\n\n"
+        f"时间: {context['time']}"
     )
+    return await _send_monitor_notification(
+        channel, MONITOR_AI_NOTIFICATION_TYPE, context, default_message, owner_id
+    )
+
+
+async def _send_monitor_notification(
+    channel: NotificationChannel,
+    event_type: str,
+    context: dict[str, Any],
+    default_message: str,
+    owner_id: int | None,
+) -> bool:
+    channel_type = str(channel.channel_type or "").strip().lower()
+    trigger_operation = (
+        EMAIL_OPERATION_MONITOR_AI_NOTIFICATION
+        if event_type == MONITOR_AI_NOTIFICATION_TYPE
+        else EMAIL_OPERATION_MONITOR_NOTIFICATION
+    )
+    try:
+        config = parse_notification_config(channel.config_payload)
+    except ValueError as exc:
+        logger.exception("商品监控通知渠道配置无效：channel_id={}, owner_id={}", channel.id, owner_id)
+        if channel_type == "email":
+            await record_email_log(
+                recipient_email="",
+                trigger_operation=trigger_operation,
+                success=False,
+                owner_id=owner_id,
+                result_message=str(exc),
+            )
+        return False
+    notify_types, fallback = resolve_stored_notification_types(config.get("notify_types"))
+    if fallback:
+        logger.warning(
+            "渠道 {}({}) 的通知类型配置异常，已按默认类型兼容",
+            channel.name,
+            channel.id,
+        )
+    if event_type not in notify_types:
+        return False
+
+    message = render_notification_template(config, event_type, context, default_message)
     try:
         return await dispatch_notification(
             channel_type,
             config,
             message,
             owner_id=owner_id,
-            trigger_operation=EMAIL_OPERATION_MONITOR_NOTIFICATION,
+            trigger_operation=trigger_operation,
         )
     except Exception as exc:
-        logger.exception("上新通知发送异常：channel_id={}, owner_id={}", channel.id, owner_id)
+        logger.exception("商品监控通知发送异常：channel_id={}, owner_id={}", channel.id, owner_id)
         if channel_type == "email":
             await record_email_log(
                 recipient_email=str(config.get("recipient_email") or ""),
-                trigger_operation=EMAIL_OPERATION_MONITOR_NOTIFICATION,
+                trigger_operation=trigger_operation,
                 success=False,
                 owner_id=owner_id,
                 result_message=str(exc),
@@ -120,4 +146,4 @@ async def send_monitor_item_notification(
         return False
 
 
-__all__ = ["send_channel_message", "send_monitor_item_notification"]
+__all__ = ["send_channel_message", "send_monitor_ai_notification", "send_monitor_item_notification"]

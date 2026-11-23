@@ -222,7 +222,7 @@ export interface NotificationChannel {
 
 // 消息通知相关类型 - 匹配后端接口
 // 后端返回格式: { cookie_id: [ { id, channel_id, enabled, channel_name, ... } ] }
-export type NotifyType = 'chat' | 'delivery' | 'account' | 'monitor'
+export type NotifyType = 'chat' | 'delivery' | 'account' | 'monitor' | 'monitor_ai'
 
 export interface MessageNotification {
   id: number

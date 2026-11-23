@@ -15,7 +15,7 @@ from common.schemas.notification import (
 )
 from common.services.notification_types import (
     ACCOUNT_NOTIFICATION_TYPES,
-    DEFAULT_NOTIFICATION_TYPES,
+    CHANNEL_NOTIFICATION_TYPES,
     NOTIFICATION_TYPE_DICTIONARY,
     NotificationTypeValueError,
     normalize_notification_types,
@@ -60,7 +60,7 @@ class MessageNotificationService:
         # 旧网页会把上新事件和账号事件一起提交；只保存有效的账号事件。
         account_types = [value for value in types if value in ACCOUNT_NOTIFICATION_TYPES]
         if not account_types:
-            raise NotificationTypeValidationError("上新监控请在通知渠道中设置，不支持账号绑定开关")
+            raise NotificationTypeValidationError("商品监控通知请在通知渠道中设置")
         return ",".join(account_types)
 
     async def get_notify_type_options(self, *, account_only: bool = False) -> list[dict[str, str]]:
@@ -71,7 +71,7 @@ class MessageNotificationService:
         Returns:
             包含事件值和数据库中文名称的选项列表。
         """
-        allowed_types = ACCOUNT_NOTIFICATION_TYPES if account_only else DEFAULT_NOTIFICATION_TYPES
+        allowed_types = ACCOUNT_NOTIFICATION_TYPES if account_only else CHANNEL_NOTIFICATION_TYPES
         result = await self.session.execute(
             select(XYDataDictionary)
             .where(

@@ -29,6 +29,16 @@ export function formatDateTime(value?: string | Date | null): string {
 }
 
 /**
+ * 直接展示后端返回的北京时间，不依赖浏览器时区。
+ *
+ * @param value 北京时间 ISO 字符串或空值
+ * @returns 秒精度的 YYYY-MM-DD HH:mm:ss 文本；缺失时为 -
+ */
+export function formatBeijingDateTime(value?: string | null): string {
+  return value ? value.replace('T', ' ').slice(0, 19) : '-'
+}
+
+/**
  * 获取北京时间日期字符串，格式为 input[type="date"] 可直接使用的 YYYY-MM-DD。
  *
  * @param value 可选日期，默认当前时间
@@ -44,4 +54,16 @@ export function getBeijingDateInputValue(value: Date = new Date()): string {
 
   const partMap = Object.fromEntries(parts.map((part) => [part.type, part.value]))
   return `${partMap.year}-${partMap.month}-${partMap.day}`
+}
+
+/**
+ * 校验并统一每日时间为 HH:MM，兼容零秒后缀和首尾空格，不做时区转换。
+ *
+ * @param value HH:MM 或 HH:MM:00 时间字符串
+ * @returns 分钟精度时间；空值、非法时间或非零秒数返回 null，由调用方提示用户
+ */
+export function normalizeMinuteTime(value?: string | null): string | null {
+  const normalized = value?.trim() ?? ''
+  if (!/^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::00)?$/.test(normalized)) return null
+  return normalized.slice(0, 5)
 }

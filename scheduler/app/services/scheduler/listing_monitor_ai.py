@@ -109,13 +109,11 @@ async def decide_monitor_items(
 
 
 def format_recommended_items(items: dict[str, dict], recommendations: dict[str, float]) -> str:
-    lines = []
+    blocks = []
     for item_id, score in recommendations.items():
         item = items[item_id]
         title = " ".join(str(item.get("title") or "未知商品").split())
         price = " ".join(str(item.get("price") or "未知").split())[:32]
-        if len(title) > 60:
-            title = title[:59] + "…"
         url = f"https://h5.m.goofish.com/item?id={quote(item_id, safe='')}"
-        lines.append(f"{title} · ¥{price} · {score:.2%}\n{url}")
-    return "\n".join(lines)
+        blocks.append(f"{title}\n价格: ¥{price}\u3000\u3000置信度: {score:.2%}\n{url}")
+    return "\n\n".join(blocks)

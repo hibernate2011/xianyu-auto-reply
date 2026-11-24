@@ -548,9 +548,9 @@ class ListingMonitorTaskService:
         matched_items = await self._filter_items(task, all_items, accounts, task_proxy)
         matched_count = len(matched_items)
         inserted_count, updated_count, new_items = await self._upsert_items(task, matched_items)
-        channels = await self._load_notification_channels(task) if all_items else []
+        channels = await self._load_notification_channels(task) if matched_items else []
         notified_count = await self._notify_new_items(task, new_items, channels)
-        ai_summary = await self._notify_ai_items(task, all_items, matched_items, accounts, task_proxy, channels)
+        ai_summary = await self._notify_ai_items(task, matched_items, accounts, task_proxy, channels)
 
         if status == "success" and not message:
             message = (
@@ -841,12 +841,13 @@ class ListingMonitorTaskService:
     async def _notify_ai_items(
         self,
         task: ListingMonitorTask,
-        items: List[dict],
         matched_items: List[dict],
         accounts: List[XYAccount],
         proxy: Optional[str],
         channels: List[NotificationChannel],
     ) -> str:
+        if not matched_items:
+            return ""
         destinations = []
         for channel in channels:
             # 存量无归属任务可能保存了跨用户渠道 ID，AI 仅处理归属明确的任务。
@@ -859,7 +860,7 @@ class ListingMonitorTaskService:
                     destinations.append((channel, monitor_ai_threshold(config)))
             except ValueError:
                 logger.warning("跳过配置无效的 AI 商品购买推荐渠道：channel_id={}", channel.id)
-        if not destinations or not items:
+        if not destinations:
             return ""
 
         try:
@@ -871,18 +872,16 @@ class ListingMonitorTaskService:
         if not api_key:
             return "AI 商品购买推荐未执行，请在通知渠道配置 OpenRouter API Key"
 
-        collected = {str(item["item_id"]): item for item in items}
-        matched = {str(item["item_id"]): item for item in matched_items}
-        collected.update(matched)
+        candidates = {str(item["item_id"]): item for item in matched_items}
         # 在有限时间内补齐详情；拿不到详情的商品仍提交标题等已有数据，由模型判断证据是否充分。
         try:
             async with asyncio.timeout(20):
-                for item_id, item in matched.items():
+                for item_id, item in candidates.items():
                     if item.get("detail") or listing_description(item):
                         continue
                     detail = await self._get_item_detail(item_id, accounts, proxy)
                     if detail:
-                        collected[item_id] = {**item, "detail": detail}
+                        candidates[item_id] = {**item, "detail": detail}
                     await asyncio.sleep(0.15)
         except TimeoutError:
             logger.info("监控任务 {} 补查商品详情超时，使用本轮已获取的信息", task.id)
@@ -897,7 +896,7 @@ class ListingMonitorTaskService:
             "排除词": task.exclude_keywords or [],
         }
         try:
-            recommendations, answered = await decide_monitor_items(api_key, requirements, collected, set(matched))
+            recommendations, answered = await decide_monitor_items(api_key, requirements, candidates)
         except MonitorDecisionError as exc:
             return f"AI 商品购买推荐失败，{exc}"
 
@@ -912,12 +911,12 @@ class ListingMonitorTaskService:
                 "task_id": task.id,
                 "keyword": task.keyword,
                 "item_count": len(selected),
-                "items": format_recommended_items(collected, selected),
+                "items": format_recommended_items(candidates, selected),
                 "time": time,
             }
             if await send_monitor_ai_notification(channel, context, owner_id=task.owner_id):
                 notified_count += 1
-        return f"AI 商品购买推荐有效判断 {answered}/{len(collected)} 件，通知成功 {notified_count} 条"
+        return f"AI 商品购买推荐有效判断 {answered}/{len(candidates)} 件，通知成功 {notified_count} 条"
 
     async def _direct_order_item(
         self,

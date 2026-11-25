@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.schema import CreateTable
 
+from common.models.listing_monitor_item import ListingMonitorRecommendation
 from common.services.email_log_service import EMAIL_OPERATION_MONITOR_AI_NOTIFICATION, EMAIL_OPERATION_MONITOR_NOTIFICATION
 from common.services.monitor_openrouter_config import monitor_openrouter_keys
 from common.services.notification_types import MONITOR_AI_NOTIFICATION_TYPE, NOTIFICATION_TYPE_DICTIONARY
@@ -132,8 +133,9 @@ async def ensure_notification_schema(conn: AsyncConnection) -> None:
 
 
 async def ensure_monitor_notification_schema(conn: AsyncConnection) -> None:
-    """补齐商品监控的专用凭据表和通知字典。"""
+    """补齐商品监控的专用凭据、推荐记录和通知字典。"""
     await conn.execute(CreateTable(monitor_openrouter_keys, if_not_exists=True))
+    await conn.execute(CreateTable(ListingMonitorRecommendation.__table__, if_not_exists=True))
     await ensure_monitor_email_operation(conn)
     await conn.execute(
         text(

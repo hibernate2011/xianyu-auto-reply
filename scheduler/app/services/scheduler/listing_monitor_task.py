@@ -27,9 +27,10 @@ from app.services.scheduler.listing_monitor_ai import (
     decide_monitor_items,
     format_recommended_items,
     listing_description,
+    recommendation_price_changed,
 )
 from common.db.session import async_session_maker
-from common.models.listing_monitor_item import ListingMonitorItem
+from common.models.listing_monitor_item import ListingMonitorItem, ListingMonitorRecommendation
 from common.models.listing_monitor_log import ListingMonitorLog
 from common.models.listing_monitor_task import ListingMonitorTask
 from common.models.notification_channel import NotificationChannel
@@ -863,6 +864,40 @@ class ListingMonitorTaskService:
         if not destinations:
             return ""
 
+        candidates = {str(item["item_id"]): item for item in matched_items}
+        prices = {
+            item_id: _truncate(item.get("price"), _ITEM_FIELD_LIMITS["price"]) or ""
+            for item_id, item in candidates.items()
+        }
+        try:
+            async with async_session_maker() as session:
+                rows = await session.execute(
+                    select(
+                        ListingMonitorRecommendation.channel_id,
+                        ListingMonitorRecommendation.item_id,
+                        ListingMonitorRecommendation.price,
+                    ).where(
+                        ListingMonitorRecommendation.channel_id.in_([channel.id for channel, _ in destinations]),
+                        ListingMonitorRecommendation.item_id.in_(prices),
+                    )
+                )
+                previous_prices = {(channel_id, item_id): price for channel_id, item_id, price in rows}
+        except SQLAlchemyError:
+            logger.exception("监控任务 {} 读取商品推荐记录失败", task.id)
+            return "AI 商品购买推荐未执行，读取推送记录失败"
+
+        pending_by_channel = {
+            channel.id: {
+                item_id for item_id, price in prices.items()
+                if recommendation_price_changed(price, previous_prices.get((channel.id, item_id)))
+            }
+            for channel, _ in destinations
+        }
+        pending_ids = set().union(*pending_by_channel.values())
+        candidates = {item_id: item for item_id, item in candidates.items() if item_id in pending_ids}
+        if not candidates:
+            return "AI 商品购买推荐已跳过，本轮无新商品或变价商品"
+
         try:
             async with async_session_maker() as session:
                 personal_key = await get_monitor_openrouter_key(session, task.owner_id)
@@ -872,7 +907,6 @@ class ListingMonitorTaskService:
         if not api_key:
             return "AI 商品购买推荐未执行，请在通知渠道配置 OpenRouter API Key"
 
-        candidates = {str(item["item_id"]): item for item in matched_items}
         # 在有限时间内补齐详情；拿不到详情的商品仍提交标题等已有数据，由模型判断证据是否充分。
         try:
             async with asyncio.timeout(20):
@@ -901,22 +935,67 @@ class ListingMonitorTaskService:
             return f"AI 商品购买推荐失败，{exc}"
 
         notified_count = 0
-        time = get_beijing_now_naive().strftime("%Y-%m-%d %H:%M:%S")
         for channel, threshold in destinations:
-            selected = {item_id: score for item_id, score in recommendations.items() if score > threshold / 100}
+            selected = {
+                item_id: score for item_id, score in recommendations.items()
+                if item_id in pending_by_channel[channel.id] and score > threshold / 100
+            }
             if not selected:
                 continue
+            try:
+                if await self._send_ai_recommendations(task, channel, candidates, selected, prices):
+                    notified_count += 1
+            except SQLAlchemyError:
+                logger.exception("监控任务 {} 渠道 {} 处理商品推荐记录失败", task.id, channel.id)
+        return f"AI 商品购买推荐有效判断 {answered}/{len(candidates)} 件，通知成功 {notified_count} 条"
+
+    async def _send_ai_recommendations(
+        self,
+        task: ListingMonitorTask,
+        channel: NotificationChannel,
+        candidates: dict[str, dict],
+        selected: dict[str, float],
+        prices: dict[str, str],
+    ) -> bool:
+        async with async_session_maker() as session:
+            # 按渠道串行发送，防止多个调度进程同时推送同一商品。
+            channel_id = await session.scalar(
+                select(NotificationChannel.id).where(NotificationChannel.id == channel.id).with_for_update()
+            )
+            if channel_id is None:
+                return False
+            rows = await session.scalars(
+                select(ListingMonitorRecommendation).where(
+                    ListingMonitorRecommendation.channel_id == channel_id,
+                    ListingMonitorRecommendation.item_id.in_(selected),
+                )
+            )
+            records = {row.item_id: row for row in rows}
+            selected = {
+                item_id: score for item_id, score in selected.items()
+                if recommendation_price_changed(prices[item_id], records[item_id].price if item_id in records else None)
+            }
+            if not selected:
+                return False
             context = {
                 "task_name": task.keyword,
                 "task_id": task.id,
                 "keyword": task.keyword,
                 "item_count": len(selected),
                 "items": format_recommended_items(candidates, selected),
-                "time": time,
+                "time": get_beijing_now_naive().strftime("%Y-%m-%d %H:%M:%S"),
             }
-            if await send_monitor_ai_notification(channel, context, owner_id=task.owner_id):
-                notified_count += 1
-        return f"AI 商品购买推荐有效判断 {answered}/{len(candidates)} 件，通知成功 {notified_count} 条"
+            if not await send_monitor_ai_notification(channel, context, owner_id=task.owner_id):
+                return False
+            for item_id in selected:
+                if item_id in records:
+                    records[item_id].price = prices[item_id]
+                else:
+                    session.add(ListingMonitorRecommendation(
+                        channel_id=channel_id, item_id=item_id, price=prices[item_id]
+                    ))
+            await session.commit()
+            return True
 
     async def _direct_order_item(
         self,

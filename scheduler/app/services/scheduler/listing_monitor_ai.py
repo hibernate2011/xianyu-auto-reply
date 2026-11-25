@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal, InvalidOperation
 from typing import Any
+from unicodedata import normalize
 from urllib.parse import quote
 
 import aiohttp
@@ -30,6 +32,25 @@ _RULES = (
 
 class MonitorDecisionError(Exception):
     """可写入监控日志的模型调用失败，不包含请求、密钥或响应正文。"""
+
+
+def _price_key(price: str) -> Decimal | str:
+    text = normalize("NFKC", price).strip().lstrip("¥").removesuffix("元").strip()
+    if text in {"", "未知", "-", "--"}:
+        return ""
+    try:
+        amount = Decimal(text.replace(",", ""))
+    except InvalidOperation:
+        return text
+    return amount if amount.is_finite() else ""
+
+
+def recommendation_price_changed(price: str, previous_price: str | None) -> bool:
+    """首次可推送；已有记录时，须取得不同的价格才能再次推送。"""
+    if previous_price is None:
+        return True
+    current = _price_key(price)
+    return current != "" and current != _price_key(previous_price)
 
 
 def listing_description(item: dict[str, Any]) -> str:

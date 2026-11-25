@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.db.base_class import Base, TimestampMixin
@@ -84,3 +84,16 @@ class ListingMonitorItem(TimestampMixin, Base):
     dm_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="实际私信成功/发起时间（用于按日统计私信数）")
     ordered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="下单成功时间（用于按日统计下单数）")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="最近一次采集到的时间")
+
+
+class ListingMonitorRecommendation(Base):
+    """同一渠道、同一商品上次成功推送的推荐价格。"""
+
+    __tablename__ = "xy_listing_monitor_recommendations"
+    __table_args__ = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
+
+    channel_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("xy_notification_channels.id", ondelete="CASCADE"), primary_key=True
+    )
+    item_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    price: Mapped[str] = mapped_column(String(32), nullable=False)

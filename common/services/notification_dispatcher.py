@@ -130,6 +130,7 @@ async def _send_monitor_notification(
             channel_type,
             config,
             message,
+            title="商品推荐" if event_type == MONITOR_AI_NOTIFICATION_TYPE else None,
             owner_id=owner_id,
             trigger_operation=trigger_operation,
         )
